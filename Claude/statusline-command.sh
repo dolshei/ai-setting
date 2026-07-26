@@ -5,9 +5,16 @@
 input=$(cat)
 
 MODEL=$(echo "$input" | jq -r '.model.display_name')
+EFFORT=$(echo "$input" | jq -r '.effort_level // empty')
 # "// empty"는 rate_limits이 없을 때 출력을 생성하지 않습니다
 FIVE_H=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+FIVE_H_RESET=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
 WEEK=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+WEEK_RESET=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
+
+# resets_at은 Unix epoch(초). 숫자가 아니면 잔여 시간 표시를 생략합니다
+case "$FIVE_H_RESET" in ''|*[!0-9]*) FIVE_H_RESET="" ;; esac
+case "$WEEK_RESET" in ''|*[!0-9]*) WEEK_RESET="" ;; esac
 DIR=$(echo "$input" | jq -r '.workspace.current_dir')
 SESSION_ID=$(echo "$input" | jq -r '.session_id')
 COST=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
@@ -52,17 +59,47 @@ fi
 
 IFS='|' read -r BRANCH STAGED MODIFIED < "$CACHE_FILE"
 
-[ -n "$FIVE_H" ] && LIMITS="5h: $(printf '%.0f' "$FIVE_H")% ,"
-[ -n "$WEEK" ] && LIMITS="${LIMITS:+$LIMITS }7d: $(printf '%.0f' "$WEEK")%"
+NOW=$(date +%s)
+
+# 리셋까지 남은 시간을 "1h20m" 형태로 (5시간 한도용, 1시간 미만이면 "20m")
+fmt_remaining_hm() {
+    _r=$(( $1 - NOW )); [ "$_r" -lt 0 ] && _r=0
+    _h=$(( _r / 3600 )); _m=$(( (_r % 3600) / 60 ))
+    if [ "$_h" -gt 0 ]; then printf '%dh%dm' "$_h" "$_m"; else printf '%dm' "$_m"; fi
+}
+
+# 리셋까지 남은 시간을 "1d4h" 형태로 (7일 한도용, 1일 미만이면 "4h")
+fmt_remaining_dh() {
+    _r=$(( $1 - NOW )); [ "$_r" -lt 0 ] && _r=0
+    _d=$(( _r / 86400 )); _h=$(( (_r % 86400) / 3600 ))
+    if [ "$_d" -gt 0 ]; then printf '%dd%dh' "$_d" "$_h"; else printf '%dh' "$_h"; fi
+}
+
+FIVE_H_TXT=""
+if [ -n "$FIVE_H" ]; then
+    FIVE_H_TXT="5h: $(printf '%.0f' "$FIVE_H")%"
+    [ -n "$FIVE_H_RESET" ] && FIVE_H_TXT="$FIVE_H_TXT ($(fmt_remaining_hm "$FIVE_H_RESET"))"
+fi
+
+WEEK_TXT=""
+if [ -n "$WEEK" ]; then
+    WEEK_TXT="7d: $(printf '%.0f' "$WEEK")%"
+    [ -n "$WEEK_RESET" ] && WEEK_TXT="$WEEK_TXT ($(fmt_remaining_dh "$WEEK_RESET"))"
+fi
+
+LIMITS="$FIVE_H_TXT"
+[ -n "$WEEK_TXT" ] && LIMITS="${LIMITS:+$LIMITS, }$WEEK_TXT"
+
+# effort_level이 없으면 세그먼트를 구분자까지 통째로 생략합니다
+EFFORT_SEG=""
+[ -n "$EFFORT" ] && EFFORT_SEG=" {$EFFORT} |"
 
 if [ -n "$BRANCH" ]; then
-    echo "${CYAN}[$MODEL]${RESET} | 📁 ${DIR##*/} | 🌿 $BRANCH +$STAGED ~$MODIFIED | ${LIMITS}"
+    echo "${CYAN}[$MODEL]${RESET} |${EFFORT_SEG} 📁 ${DIR##*/} | 🌿 $BRANCH +$STAGED ~$MODIFIED | ${LIMITS}"
 else
-    echo "${CYAN}[$MODEL]${RESET} | 📁 ${DIR##*/} | ${LIMITS}"
+    echo "${CYAN}[$MODEL]${RESET} |${EFFORT_SEG} 📁 ${DIR##*/} | ${LIMITS}"
 fi
 
 
 COST_FMT=$(printf '$%.2f' "$COST")
 echo "${BAR_COLOR}${BAR}${RESET} ${PCT}% | ${YELLOW}${COST_FMT}${RESET} | ⏱️ ${MINS}m ${SECS}s"
-
-
