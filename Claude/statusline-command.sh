@@ -5,7 +5,8 @@
 input=$(cat)
 
 MODEL=$(echo "$input" | jq -r '.model.display_name')
-EFFORT=$(echo "$input" | jq -r '.effort_level // empty')
+# 실제 JSON은 effort.level (중첩). 구버전 호환으로 effort_level도 함께 봅니다
+EFFORT=$(echo "$input" | jq -r '.effort.level // .effort_level // empty')
 # "// empty"는 rate_limits이 없을 때 출력을 생성하지 않습니다
 FIVE_H=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
 FIVE_H_RESET=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
@@ -17,6 +18,7 @@ case "$FIVE_H_RESET" in ''|*[!0-9]*) FIVE_H_RESET="" ;; esac
 case "$WEEK_RESET" in ''|*[!0-9]*) WEEK_RESET="" ;; esac
 DIR=$(echo "$input" | jq -r '.workspace.current_dir')
 SESSION_ID=$(echo "$input" | jq -r '.session_id')
+THINKING=$(echo "$input" | jq -r '.thinking.enabled // false')
 COST=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 PCT=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
 DURATION_MS=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
@@ -31,7 +33,14 @@ FILLED=$((PCT / 10)); EMPTY=$((10 - FILLED))
 printf -v FILL "%${FILLED}s"; printf -v PAD "%${EMPTY}s"
 BAR="${FILL// /█}${PAD// /░}"
 
-MINS=$((DURATION_MS / 60000)); SECS=$(((DURATION_MS % 60000) / 1000))
+# 총 소요 시간을 "3h 34m 20s" 형태로 (1시간 미만이면 "34m 20s")
+TOTAL_SECS=$((DURATION_MS / 1000))
+HRS=$((TOTAL_SECS / 3600)); MINS=$(((TOTAL_SECS % 3600) / 60)); SECS=$((TOTAL_SECS % 60))
+if [ "$HRS" -gt 0 ]; then
+    DURATION_FMT="${HRS}h ${MINS}m ${SECS}s"
+else
+    DURATION_FMT="${MINS}m ${SECS}s"
+fi
 
 BRANCH=""
 git rev-parse --git-dir > /dev/null 2>&1 && BRANCH=" | 🌿 $(git branch --show-current 2>/dev/null)"
@@ -92,14 +101,18 @@ LIMITS="$FIVE_H_TXT"
 
 # effort_level이 없으면 세그먼트를 구분자까지 통째로 생략합니다
 EFFORT_SEG=""
-[ -n "$EFFORT" ] && EFFORT_SEG=" {$EFFORT} |"
+[ -n "$EFFORT" ] && EFFORT_SEG=" $EFFORT |"
+
+# thinking.enabled가 true이면 세그먼트를 추가합니다
+THINKING_SEG=""
+[ "$THINKING" = "true" ] && THINKING_SEG=" Thinking |"
 
 if [ -n "$BRANCH" ]; then
-    echo "${CYAN}[$MODEL]${RESET} |${EFFORT_SEG} 📁 ${DIR##*/} | 🌿 $BRANCH +$STAGED ~$MODIFIED | ${LIMITS}"
+    echo "${CYAN}[$MODEL]${RESET} |${EFFORT_SEG}${THINKING_SEG} 📁 ${DIR##*/} | 🌿 $BRANCH +$STAGED ~$MODIFIED | ${LIMITS}"
 else
-    echo "${CYAN}[$MODEL]${RESET} |${EFFORT_SEG} 📁 ${DIR##*/} | ${LIMITS}"
+    echo "${CYAN}[$MODEL]${RESET} |${EFFORT_SEG}${THINKING_SEG} 📁 ${DIR##*/} | ${LIMITS}"
 fi
 
 
 COST_FMT=$(printf '$%.2f' "$COST")
-echo "${BAR_COLOR}${BAR}${RESET} ${PCT}% | ${YELLOW}${COST_FMT}${RESET} | ⏱️ ${MINS}m ${SECS}s"
+echo "${BAR_COLOR}${BAR}${RESET} ${PCT}% | ${YELLOW}${COST_FMT}${RESET} | ⏱️ ${DURATION_FMT} | Session: $SESSION_ID"
