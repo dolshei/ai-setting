@@ -105,11 +105,11 @@ if ($input_json.effort.level) {
     $parts.Add("thinking: on")
 }
 
-# 3. Current working directory -- read here because the git lookup below needs
-#    it, but appended at the end of the line (see below).
+# Working directory: read up front because the git lookup below needs it, but
+# emitted last on the line -- see item 7.
 $cwd = $input_json.cwd
 
-# 4. Git branch
+# 3. Git branch
 #    The statusline JSON schema has no generic "current git branch" field,
 #    so it is resolved by calling git directly (optional locks skipped).
 if ($cwd) {
@@ -121,7 +121,7 @@ if ($cwd) {
     } catch {}
 }
 
-# 5. Elapsed time since session start, e.g. "1h 30m" / "1d 2h 32m"
+# 4. Elapsed time since session start, e.g. "1h 30m" / "1d 2h 32m"
 #    The statusline JSON has no "session start time" field either, so this
 #    is derived from the earliest "timestamp" entry in the session
 #    transcript file (transcript_path).
@@ -146,27 +146,27 @@ if ($transcriptPath -and (Test-Path -LiteralPath $transcriptPath)) {
     } catch {}
 }
 
-# 6. Pre-computed used percentage of the context window
+# 5. Pre-computed used percentage of the context window
 $usedPct = $input_json.context_window.used_percentage
 if ($null -ne $usedPct) {
     $parts.Add("ctx used: $(Format-Usage -Percent $usedPct)")
 }
 
-# 7. Pre-computed remaining percentage of the context window
+# 6. Pre-computed remaining percentage of the context window
 $remainingPct = $input_json.context_window.remaining_percentage
 if ($null -ne $remainingPct) {
     $parts.Add("ctx left: $(Format-Remaining -Percent $remainingPct)")
 }
 
-# 3 (continued). The working directory is the longest and most variable field,
-# so it trails the fixed-width ones to keep the line's left side stable.
+# 7. Current working directory. The longest and most variable field, so it
+#    trails the fixed-width ones to keep the line's left side stable.
 if ($cwd) {
     $parts.Add($cwd)
 }
 
-# 8 & 9. Rate limit usage and time to reset, rendered on their own second
-#    line. Both windows are shown, 5-hour first then 7-day; either may be
-#    absent from the payload, in which case it is simply skipped.
+# 8. Rate limit usage and time to reset, rendered on their own second line.
+#    Both windows are shown, 5-hour first then 7-day; either may be absent
+#    from the payload, in which case it is simply skipped.
 $rateParts = New-Object System.Collections.Generic.List[string]
 $windows = @(
     @{ Label = "5h"; Data = $input_json.rate_limits.five_hour },
