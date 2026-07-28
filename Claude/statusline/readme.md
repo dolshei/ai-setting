@@ -15,3 +15,5 @@
 |-- |--|
 | ~\.claude\statusline.ps1   | 없음 (non-ASCII 0바이트, 인코딩 무관) |
 |~\.claude\settings.json 의 statusLine 블록 | 없음 |
+
+![statusline_win.png](windows/statusline_win.png)
