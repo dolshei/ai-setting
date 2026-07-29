@@ -70,34 +70,31 @@ IFS='|' read -r BRANCH STAGED MODIFIED < "$CACHE_FILE"
 
 NOW=$(date +%s)
 
-# 리셋까지 남은 시간을 "1h20m" 형태로 (5시간 한도용, 1시간 미만이면 "20m")
-fmt_remaining_hm() {
+# 리셋까지 남은 시간을 "1d 11h 35m" 형태로 (0인 상위 단위는 생략: "11h 35m", "35m")
+fmt_remaining() {
     _r=$(( $1 - NOW )); [ "$_r" -lt 0 ] && _r=0
-    _h=$(( _r / 3600 )); _m=$(( (_r % 3600) / 60 ))
-    if [ "$_h" -gt 0 ]; then printf '%dh%dm' "$_h" "$_m"; else printf '%dm' "$_m"; fi
-}
-
-# 리셋까지 남은 시간을 "1d4h" 형태로 (7일 한도용, 1일 미만이면 "4h")
-fmt_remaining_dh() {
-    _r=$(( $1 - NOW )); [ "$_r" -lt 0 ] && _r=0
-    _d=$(( _r / 86400 )); _h=$(( (_r % 86400) / 3600 ))
-    if [ "$_d" -gt 0 ]; then printf '%dd%dh' "$_d" "$_h"; else printf '%dh' "$_h"; fi
+    _d=$(( _r / 86400 )); _h=$(( (_r % 86400) / 3600 )); _m=$(( (_r % 3600) / 60 ))
+    if [ "$_d" -gt 0 ]; then printf '%dd %dh %dm' "$_d" "$_h" "$_m"
+    elif [ "$_h" -gt 0 ]; then printf '%dh %dm' "$_h" "$_m"
+    else printf '%dm' "$_m"; fi
 }
 
 FIVE_H_TXT=""
 if [ -n "$FIVE_H" ]; then
     FIVE_H_TXT="5h: $(printf '%.0f' "$FIVE_H")%"
-    [ -n "$FIVE_H_RESET" ] && FIVE_H_TXT="$FIVE_H_TXT ($(fmt_remaining_hm "$FIVE_H_RESET"))"
+    [ -n "$FIVE_H_RESET" ] && FIVE_H_TXT="$FIVE_H_TXT ($(fmt_remaining "$FIVE_H_RESET"))"
 fi
 
 WEEK_TXT=""
 if [ -n "$WEEK" ]; then
     WEEK_TXT="7d: $(printf '%.0f' "$WEEK")%"
-    [ -n "$WEEK_RESET" ] && WEEK_TXT="$WEEK_TXT ($(fmt_remaining_dh "$WEEK_RESET"))"
+    [ -n "$WEEK_RESET" ] && WEEK_TXT="$WEEK_TXT ($(fmt_remaining "$WEEK_RESET"))"
 fi
 
-LIMITS="$FIVE_H_TXT"
-[ -n "$WEEK_TXT" ] && LIMITS="${LIMITS:+$LIMITS, }$WEEK_TXT"
+# 한도 정보가 없으면 구분자까지 통째로 생략합니다
+LIMITS_SEG=""
+[ -n "$FIVE_H_TXT" ] && LIMITS_SEG="$LIMITS_SEG | $FIVE_H_TXT"
+[ -n "$WEEK_TXT" ] && LIMITS_SEG="$LIMITS_SEG | $WEEK_TXT"
 
 # effort_level이 없으면 세그먼트를 구분자까지 통째로 생략합니다
 EFFORT_SEG=""
@@ -108,11 +105,50 @@ THINKING_SEG=""
 [ "$THINKING" = "true" ] && THINKING_SEG=" Thinking |"
 
 if [ -n "$BRANCH" ]; then
-    echo "${CYAN}[$MODEL]${RESET} |${EFFORT_SEG}${THINKING_SEG} 📁 ${DIR##*/} | 🌿 $BRANCH +$STAGED ~$MODIFIED | ${LIMITS}"
+    echo "${CYAN}[$MODEL]${RESET} |${EFFORT_SEG}${THINKING_SEG} 📁 ${DIR##*/} | 🌿 $BRANCH +$STAGED ~$MODIFIED${LIMITS_SEG}"
 else
-    echo "${CYAN}[$MODEL]${RESET} |${EFFORT_SEG}${THINKING_SEG} 📁 ${DIR##*/} | ${LIMITS}"
+    echo "${CYAN}[$MODEL]${RESET} |${EFFORT_SEG}${THINKING_SEG} 📁 ${DIR##*/}${LIMITS_SEG}"
 fi
 
 
+# 세션 시작 시각 = transcript 파일 생성 시각. 세션 내내 불변이므로 한 번만 구해 캐시합니다
+START_CACHE="/tmp/statusline-session-start-$SESSION_ID"
+if [ -f "$START_CACHE" ]; then
+    SESSION_START=$(cat "$START_CACHE")
+else
+    TRANSCRIPT=$(echo "$input" | jq -r '.transcript_path // empty')
+    # transcript_path가 입력에 없으면 session_id로 프로젝트 디렉터리에서 찾습니다
+    if [ ! -f "$TRANSCRIPT" ]; then
+        for _f in "$HOME"/.claude/projects/*/"$SESSION_ID".jsonl; do
+            [ -f "$_f" ] && TRANSCRIPT="$_f" && break
+        done
+    fi
+    SESSION_START=""
+    if [ -f "$TRANSCRIPT" ]; then
+        # stat -f %B는 macOS(생성 시각), stat -c %W는 Linux(미지원이면 0 → mtime으로 대체)
+        SESSION_START=$(stat -f %B "$TRANSCRIPT" 2>/dev/null || stat -c %W "$TRANSCRIPT" 2>/dev/null)
+        [ "$SESSION_START" = "0" ] && SESSION_START=$(stat -c %Y "$TRANSCRIPT" 2>/dev/null)
+    fi
+    case "$SESSION_START" in ''|*[!0-9]*) SESSION_START="" ;; esac
+    if [ -n "$SESSION_START" ]; then
+        echo "$SESSION_START" > "$START_CACHE"
+    else
+        # transcript를 아직 못 찾은 경우. 캐시하지 않고 다음 호출에서 다시 시도합니다
+        SESSION_START=$NOW
+    fi
+fi
+
+# date -r은 macOS/BSD, date -d @는 GNU
+fmt_epoch() {
+    date -r "$1" "+$2" 2>/dev/null || date -d "@$1" "+$2" 2>/dev/null
+}
+
+# 오늘 시작한 세션이면 시:분만, 날짜가 넘어갔으면 월/일까지 표시합니다
+if [ "$(fmt_epoch "$SESSION_START" %F)" = "$(date +%F)" ]; then
+    START_FMT=$(fmt_epoch "$SESSION_START" '%H:%M')
+else
+    START_FMT=$(fmt_epoch "$SESSION_START" '%m/%d %H:%M')
+fi
+
 COST_FMT=$(printf '$%.2f' "$COST")
-echo "${BAR_COLOR}${BAR}${RESET} ${PCT}% | ${YELLOW}${COST_FMT}${RESET} | ⏱️ ${DURATION_FMT} | Session: $SESSION_ID"
+echo "${BAR_COLOR}${BAR}${RESET} ${PCT}% | ${YELLOW}${COST_FMT}${RESET} | ⏱️ ${DURATION_FMT} | 🕒 ${START_FMT} | Session: $SESSION_ID"
