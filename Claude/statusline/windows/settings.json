@@ -1,0 +1,23 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "powershell -NoProfile -File ~/.claude/statusline.ps1"
+  },
+  "model": "opus",
+  "enabledPlugins": {
+    "skill-creator@claude-plugins-official": true,
+    "andrej-karpathy-skills@karpathy-skills": true
+  },
+  "extraKnownMarketplaces": {
+    "karpathy-skills": {
+      "source": {
+        "source": "github",
+        "repo": "forrestchang/andrej-karpathy-skills"
+      }
+    }
+  },
+  "language": "Korean",
+  "effortLevel": "xhigh",
+  "voiceEnabled": true,
+  "tui": "fullscreen"
+}
